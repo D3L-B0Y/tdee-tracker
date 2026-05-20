@@ -22,23 +22,39 @@ async function clearStore(storeName) {
   });
 }
 
-async function bulkPutToStore(storeName, rows) {
+async function bulkPutToStore(storeName, rows, keyPath) {
   const db = await DB.openDB();
-  return new Promise((resolve, reject) => {
+  // Filter out null/undefined and rows missing their key path
+  const valid = [];
+  let skipped = 0;
+  for (const row of rows || []) {
+    if (row == null || typeof row !== 'object') { skipped++; continue; }
+    if (keyPath && (row[keyPath] == null || row[keyPath] === '')) { skipped++; continue; }
+    valid.push(row);
+  }
+  return new Promise((resolve) => {
+    if (valid.length === 0) { resolve({ ok: 0, skipped, errors: [] }); return; }
     const t = db.transaction(storeName, 'readwrite');
     const store = t.objectStore(storeName);
-    let errored = false;
-    for (const row of rows) {
-      const req = store.put(row);
-      req.onerror = (e) => {
-        if (!errored) {
-          errored = true;
-          reject(req.error || new Error(`Failed writing to ${storeName}`));
-        }
-      };
+    let ok = 0;
+    const errors = [];
+    for (const row of valid) {
+      try {
+        const req = store.put(row);
+        req.onsuccess = () => { ok++; };
+        req.onerror = (e) => {
+          errors.push({ row, message: req.error?.message || 'unknown' });
+          e.preventDefault?.();
+          e.stopPropagation?.();
+        };
+      } catch (err) {
+        errors.push({ row, message: err.message || String(err) });
+      }
     }
-    t.oncomplete = () => { if (!errored) resolve(); };
-    t.onerror = () => { if (!errored) { errored = true; reject(t.error); } };
+    const finish = () => resolve({ ok, skipped, errors });
+    t.oncomplete = finish;
+    t.onerror = finish;
+    t.onabort = finish;
   });
 }
 
@@ -79,6 +95,9 @@ async function exportBackup() {
 
 async function restoreBackup(file, { wipeFirst = true } = {}) {
   const text = await file.text();
+  if (!text || !text.trim()) {
+    throw new Error('Backup file is empty.');
+  }
   let blob;
   try {
     blob = JSON.parse(text);
@@ -86,31 +105,41 @@ async function restoreBackup(file, { wipeFirst = true } = {}) {
     throw new Error('Not a valid backup file (could not parse JSON).');
   }
   if (blob.app !== 'tdee-tracker') {
-    throw new Error('This file isn\'t a TDEE Tracker backup.');
+    throw new Error("This file isn't a TDEE Tracker backup.");
   }
   if (!blob.stores || typeof blob.stores !== 'object') {
     throw new Error('Backup file has no data sections.');
   }
-  // Optionally wipe each store first
   const storeNames = Object.keys(blob.stores);
   if (wipeFirst) {
     for (const name of storeNames) {
-      try { await clearStore(name); } catch (err) { /* ignore missing store */ }
+      try { await clearStore(name); } catch (err) { /* missing store on older DB — ignore */ }
     }
   }
-  // Restore
   const counts = {};
+  const skipped = {};
+  const issues = {};
   for (const name of storeNames) {
     const rows = blob.stores[name] || [];
     if (!rows.length) { counts[name] = 0; continue; }
+    const keyPath = DB.STORES?.[name]?.keyPath;
     try {
-      await bulkPutToStore(name, rows);
-      counts[name] = rows.length;
+      const result = await bulkPutToStore(name, rows, keyPath);
+      counts[name] = result.ok;
+      if (result.skipped) skipped[name] = result.skipped;
+      if (result.errors.length) issues[name] = result.errors.slice(0, 3);
     } catch (err) {
-      throw new Error(`Failed restoring ${name}: ${err.message || err}`);
+      issues[name] = [{ message: err.message || String(err) }];
     }
   }
-  return { counts, exportedAt: blob.exportedAt };
+  const totalOk = Object.values(counts).reduce((s, n) => s + n, 0);
+  if (totalOk === 0) {
+    throw new Error(
+      `Restore wrote 0 records. The backup may be empty or malformed. ` +
+      `Stores tried: ${storeNames.join(', ')}.`
+    );
+  }
+  return { counts, skipped, issues, exportedAt: blob.exportedAt };
 }
 
 window.Backup = { exportBackup, restoreBackup, BACKUP_VERSION };
