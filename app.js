@@ -77,7 +77,14 @@ const App = {
           }
           this.render();
           const total = Object.values(r.counts).reduce((s, v) => s + v, 0);
-          toast(`Restored ${total} records from ${new Date(r.exportedAt).toLocaleDateString()}`, 'success');
+          const skippedTotal = Object.values(r.skipped || {}).reduce((s, v) => s + v, 0);
+          const msg = skippedTotal > 0
+            ? `Restored ${total} records (skipped ${skippedTotal} malformed)`
+            : `Restored ${total} records from ${new Date(r.exportedAt).toLocaleDateString()}`;
+          toast(msg, 'success');
+          if (Object.keys(r.issues || {}).length) {
+            console.warn('Restore issues:', r.issues);
+          }
         } catch (err) {
           toast(err.message || 'Restore failed', 'error');
         }
