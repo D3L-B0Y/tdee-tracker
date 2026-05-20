@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>TDEE &amp; Weight Tracker</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="TDEE" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">TDEE Tracker</div>
+    <div class="profile-switcher" id="profile-switcher">
+      <!-- profile pills injected here -->
+    </div>
+    <button class="icon-btn" id="export-btn" title="Export to Excel" aria-label="Export profile to Excel">&#8615;</button>
+    <button class="icon-btn" id="backup-btn" title="Backup all data (JSON)" aria-label="Backup all data">&#128190;</button>
+    <label class="icon-btn restore-pick" id="restore-btn" title="Restore from backup" aria-label="Restore from backup">
+      &#8617;
+      <input type="file" id="restore-file" accept=".json,application/json" hidden />
+    </label>
+    <button class="icon-btn" id="settings-btn" title="Profile settings" aria-label="Profile settings">&#9881;</button>
+  </header>
+
+  <main id="app">
+    <!-- views injected here -->
+  </main>
+
+  <!-- ============ TEMPLATES ============ -->
+
+  <template id="tpl-welcome">
+    <section class="view view-welcome">
+      <div class="card center">
+        <h1>Welcome</h1>
+        <p class="muted">Set up two profiles to start tracking. You can edit anything later.</p>
+        <button class="btn primary" data-action="create-first">Create first profile</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-profile-form">
+    <section class="view view-profile-form">
+      <form class="card profile-form" id="profile-form">
+        <h2 data-role="title">New profile</h2>
+
+        <label>Name
+          <input type="text" name="name" required maxlength="40" placeholder="e.g. Dan" />
+        </label>
+
+        <div class="row">
+          <label>Sex
+            <select name="sex" required>
+              <option value="">—</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </label>
+          <label>Date of birth
+            <input type="date" name="dob" required />
+          </label>
+        </div>
+
+        <fieldset class="unit-group">
+          <legend>Height</legend>
+          <div class="unit-toggle">
+            <label><input type="radio" name="height_unit" value="cm" checked /> cm</label>
+            <label><input type="radio" name="height_unit" value="ft" /> ft / in</label>
+          </div>
+          <div class="row" data-unit="cm">
+            <label>Height (cm)
+              <input type="number" name="height_cm" min="80" max="250" step="0.1" />
+            </label>
+          </div>
+          <div class="row hidden" data-unit="ft">
+            <label>Feet
+              <input type="number" name="height_ft" min="3" max="8" step="1" />
+            </label>
+            <label>Inches
+              <input type="number" name="height_in" min="0" max="11.9" step="0.1" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="unit-group">
+          <legend>Weight</legend>
+          <div class="unit-toggle">
+            <label><input type="radio" name="weight_unit" value="kg" checked /> kg</label>
+            <label><input type="radio" name="weight_unit" value="lbs" /> lbs</label>
+          </div>
+          <div class="row">
+            <label>Starting weight
+              <input type="number" name="start_weight" min="30" max="350" step="0.1" required />
+            </label>
+            <label>Goal weight
+              <input type="number" name="goal_weight" min="30" max="350" step="0.1" required />
+            </label>
+          </div>
+        </fieldset>
+
+        <label>Activity level
+          <select name="activity_level" required>
+            <option value="1.2">Sedentary (little or no exercise)</option>
+            <option value="1.375">Light (1–3 days / week)</option>
+            <option value="1.55" selected>Moderate (3–5 days / week)</option>
+            <option value="1.725">Active (6–7 days / week)</option>
+            <option value="1.9">Very active (physical job or 2x/day)</option>
+          </select>
+        </label>
+
+        <div class="actions">
+          <button type="button" class="btn ghost" data-action="cancel">Cancel</button>
+          <button type="submit" class="btn primary">Save profile</button>
+        </div>
+      </form>
+    </section>
+  </template>
+
+  <template id="tpl-dashboard">
+    <section class="view view-dashboard">
+      <div class="grid">
+        <div class="card targets" id="card-targets">
+          <div class="card-header">
+            <h2>Today's targets</h2>
+            <span class="badge" data-role="method-badge">—</span>
+          </div>
+          <div class="target-grid">
+            <button type="button" class="target target-pick" data-target="maintenance">
+              <div class="target-label">Maintenance TDEE</div>
+              <div class="target-value" data-role="maintenance">—</div>
+            </button>
+            <button type="button" class="target target-pick" data-target="cut500">
+              <div class="target-label">−500 (≈1 lb/wk)</div>
+              <div class="target-value" data-role="cut500">—</div>
+            </button>
+            <button type="button" class="target target-pick" data-target="cut1000">
+              <div class="target-label">−1000 (≈2 lb/wk)</div>
+              <div class="target-value" data-role="cut1000">—</div>
+            </button>
+          </div>
+          <p class="muted small" data-role="method-explainer">—</p>
+          <div class="method-breakdown" data-role="method-breakdown"></div>
+        </div>
+
+        <div class="card cheat-day" id="card-cheat-day">
+          <div class="card-header">
+            <h2>Cheat day bank</h2>
+            <div class="cheat-day-controls">
+              <label class="inline-label">
+                Cheat day
+                <select data-role="cheat-day-select">
+                  <option value="-1">None</option>
+                  <option value="1">Monday</option>
+                  <option value="2">Tuesday</option>
+                  <option value="3">Wednesday</option>
+                  <option value="4">Thursday</option>
+                  <option value="5">Friday</option>
+                  <option value="6" selected>Saturday</option>
+                  <option value="0">Sunday</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <p class="muted small" data-role="cheat-week-range">—</p>
+
+          <div class="cheat-headline">
+            <div class="cheat-headline-label" data-role="cheat-headline-label">Saturday available</div>
+            <div class="cheat-headline-value" data-role="cheat-headline-value">—</div>
+            <div class="cheat-headline-sub" data-role="cheat-headline-sub">—</div>
+          </div>
+
+          <div class="cheat-stat-grid">
+            <div class="cheat-stat">
+              <div class="stat-label">Daily target</div>
+              <div class="stat-value" data-role="cheat-day-target">—</div>
+              <div class="muted small" data-role="cheat-deficit-label">—</div>
+            </div>
+            <div class="cheat-stat">
+              <div class="stat-label">Weekly budget</div>
+              <div class="stat-value" data-role="cheat-weekly-budget">—</div>
+              <div class="muted small">7 × daily target</div>
+            </div>
+            <div class="cheat-stat">
+              <div class="stat-label">Exercise bonus</div>
+              <div class="stat-value" data-role="cheat-exercise-bonus">—</div>
+              <div class="muted small" data-role="cheat-baseline">—</div>
+            </div>
+            <div class="cheat-stat">
+              <div class="stat-label">Eaten this week</div>
+              <div class="stat-value" data-role="cheat-eaten">—</div>
+              <div class="muted small" data-role="cheat-eaten-detail">—</div>
+            </div>
+          </div>
+
+          <div class="cheat-day-strip" data-role="cheat-day-strip"></div>
+
+          <p class="muted small cheat-help" data-role="cheat-help">
+            Change your daily deficit by tapping the target boxes above. Exercise bonus is active
+            calories above your 14-day baseline — extra burn earned by working out harder than usual.
+          </p>
+        </div>
+
+        <div class="card today" id="card-today">
+          <div class="card-header">
+            <h2>Today</h2>
+            <span class="muted small" data-role="today-date">—</span>
+          </div>
+          <div class="today-grid">
+            <div class="today-stat">
+              <div class="stat-label">Eaten</div>
+              <div class="stat-value" data-role="today-eaten">—</div>
+            </div>
+            <div class="today-stat">
+              <div class="stat-label">Remaining vs target</div>
+              <div class="stat-value" data-role="today-remaining">—</div>
+            </div>
+            <div class="today-stat">
+              <div class="stat-label">Carbs</div>
+              <div class="stat-value" data-role="today-carbs">—</div>
+            </div>
+            <div class="today-stat">
+              <div class="stat-label">Latest weight</div>
+              <div class="stat-value" data-role="today-weight">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card health" id="card-health">
+          <div class="card-header">
+            <h2>Apple Health</h2>
+            <span class="muted small" data-role="health-status">No data imported</span>
+          </div>
+          <div class="health-stats">
+            <div class="health-stat">
+              <div class="stat-label">Days</div>
+              <div class="stat-value" data-role="health-days">—</div>
+            </div>
+            <div class="health-stat">
+              <div class="stat-label">Avg active</div>
+              <div class="stat-value" data-role="health-avg-active">—</div>
+            </div>
+            <div class="health-stat">
+              <div class="stat-label">Last import</div>
+              <div class="stat-value" data-role="health-last-import">—</div>
+            </div>
+          </div>
+          <p class="muted small" data-role="health-range"></p>
+          <div class="health-actions">
+            <label class="file-pick">
+              <input type="file" id="health-file" accept=".xml,.zip,.csv" hidden />
+              <span class="btn primary">Import file (.zip / .xml / .csv)</span>
+            </label>
+            <button type="button" class="btn ghost" data-role="manual-entry-btn">Quick manual entry</button>
+            <button type="button" class="btn ghost hidden" data-role="health-clear">Clear data</button>
+          </div>
+          <p class="muted small import-help">
+            Apple Health → profile icon → Export All Health Data (.zip).
+            CSV from a 7-day-export app works too. If a huge zip stalls, use Quick manual entry.
+          </p>
+          <div class="import-progress hidden" data-role="health-progress">
+            <div class="progress-bar"><div class="bar-fill" data-role="bar-fill"></div></div>
+            <div class="muted small" data-role="progress-text"></div>
+          </div>
+        </div>
+
+        <div class="card entry" id="card-entry">
+          <div class="card-header">
+            <h2>Log entry</h2>
+            <div class="tabs">
+              <button class="tab active" data-tab="food">Food</button>
+              <button class="tab" data-tab="weight">Weight</button>
+            </div>
+          </div>
+
+          <form class="entry-form" id="food-form" data-tab-panel="food">
+            <label>Date
+              <input type="date" name="date" required />
+            </label>
+            <div class="row">
+              <label>Calories eaten
+                <input type="number" name="calories" min="0" max="20000" step="1" inputmode="numeric" />
+              </label>
+              <label>Carbs (g)
+                <input type="number" name="carbs" min="0" max="2000" step="1" inputmode="numeric" />
+              </label>
+            </div>
+            <label>Notes
+              <textarea name="notes" rows="2" placeholder="Optional"></textarea>
+            </label>
+            <div class="actions">
+              <button type="submit" class="btn primary">Save food entry</button>
+            </div>
+          </form>
+
+          <form class="entry-form hidden" id="weight-form" data-tab-panel="weight">
+            <label>Date
+              <input type="date" name="date" required />
+            </label>
+            <label>Weight
+              <div class="input-with-unit">
+                <input type="number" name="weight" min="20" max="400" step="0.1" inputmode="decimal" required />
+                <select name="weight_unit">
+                  <option value="kg">kg</option>
+                  <option value="lbs">lbs</option>
+                </select>
+              </div>
+            </label>
+            <div class="actions">
+              <button type="submit" class="btn primary">Save weight</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card chart-card" id="card-chart-weight">
+          <div class="card-header">
+            <h2>Weight over time</h2>
+            <span class="muted small" data-role="weight-chart-meta">—</span>
+          </div>
+          <div class="chart-wrap"><canvas data-role="weight-canvas"></canvas></div>
+          <p class="muted small chart-empty hidden" data-role="weight-empty">Log at least one weight to see your trend.</p>
+          <div class="spikes" data-role="spikes"></div>
+        </div>
+
+        <div class="card chart-card" id="card-chart-calories">
+          <div class="card-header">
+            <h2>Calories vs TDEE</h2>
+            <span class="muted small" data-role="cal-chart-meta">—</span>
+          </div>
+          <div class="chart-wrap"><canvas data-role="calories-canvas"></canvas></div>
+          <p class="muted small chart-empty hidden" data-role="cal-empty">Log calories on a few days to see the deficit/surplus picture.</p>
+        </div>
+
+        <div class="card measurements" id="card-measurements">
+          <div class="card-header">
+            <h2>Body measurements</h2>
+            <span class="muted small" data-role="measure-count">0</span>
+          </div>
+          <form class="measure-form" id="measure-form">
+            <div class="measure-row-top">
+              <label>Date
+                <input type="date" name="date" required />
+              </label>
+              <div class="unit-toggle measure-unit">
+                <label><input type="radio" name="measure_unit" value="cm" checked /> cm</label>
+                <label><input type="radio" name="measure_unit" value="in" /> in</label>
+              </div>
+            </div>
+            <div class="measure-grid">
+              <label>Waist <input type="number" name="waist" min="20" max="300" step="0.1" inputmode="decimal" /></label>
+              <label>Chest <input type="number" name="chest" min="20" max="300" step="0.1" inputmode="decimal" /></label>
+              <label>Arms <input type="number" name="arms" min="10" max="100" step="0.1" inputmode="decimal" /></label>
+              <label>Legs <input type="number" name="legs" min="20" max="200" step="0.1" inputmode="decimal" /></label>
+              <label>Calves <input type="number" name="calves" min="10" max="100" step="0.1" inputmode="decimal" /></label>
+            </div>
+            <div class="actions">
+              <button type="submit" class="btn primary">Save measurements</button>
+            </div>
+          </form>
+          <div class="measure-list" data-role="measure-list">
+            <p class="muted small empty">No measurements logged yet.</p>
+          </div>
+        </div>
+
+        <div class="card history" id="card-history">
+          <div class="card-header">
+            <h2>Recent entries</h2>
+            <span class="muted small" data-role="history-count">0</span>
+          </div>
+          <div class="history-list" data-role="history-list">
+            <p class="muted small empty">No entries yet.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-manual-health">
+    <div class="modal-backdrop">
+      <div class="modal modal-wide">
+        <h3>Quick manual entry — Apple Health active calories</h3>
+        <p class="muted small">Type in the last few days of active calories from the Watch / Health app.
+          Leave a row blank to skip it. Saves on top of existing data — re-entering a date overwrites.</p>
+        <form id="manual-health-form" class="manual-health-form">
+          <div data-role="manual-rows"></div>
+          <div class="actions">
+            <button type="button" class="btn ghost" data-action="cancel">Cancel</button>
+            <button type="submit" class="btn primary">Save entries</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-confirm">
+    <div class="modal-backdrop">
+      <div class="modal">
+        <h3 data-role="title">Delete entry?</h3>
+        <p class="muted" data-role="body">This can't be undone.</p>
+        <div class="actions">
+          <button class="btn ghost" data-action="cancel">Cancel</button>
+          <button class="btn danger" data-action="confirm">Delete</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+  <script>
+    // Register service worker (PWA install on Android via "Add to Home Screen")
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW reg failed:', err));
+      });
+    }
+  </script>
+  <script src="db.js"></script>
+  <script src="tdee.js"></script>
+  <script src="import-health.js"></script>
+  <script src="charts.js"></script>
+  <script src="export.js"></script>
+  <script src="cheat-day.js"></script>
+  <script src="backup.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
