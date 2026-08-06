@@ -93,6 +93,139 @@ async function exportBackup() {
   return { filename, counts: blob.counts };
 }
 
+function looksLikeLegacyBackup(blob) {
+  // Other "tdee-tracker" implementation: schemaVersion at root, camelCase fields,
+  // dailyLogs/healthDaily store names, profiles keyed by userId not id.
+  if (blob.schemaVersion != null && blob.version == null) return true;
+  if (blob.stores?.dailyLogs || blob.stores?.healthDaily) return true;
+  if (Array.isArray(blob.stores?.profiles)
+      && blob.stores.profiles.length > 0
+      && blob.stores.profiles.some(p => p && 'userId' in p && !('id' in p))) return true;
+  return false;
+}
+
+function activityLevelToNumber(level) {
+  if (typeof level === 'number') return level;
+  const map = {
+    sedentary: 1.2,
+    light: 1.375,
+    moderate: 1.55,
+    active: 1.725,
+    very_active: 1.9,
+    'very active': 1.9,
+    'very-active': 1.9,
+  };
+  return map[String(level || '').toLowerCase()] || 1.55;
+}
+
+function convertLegacyBackup(legacy) {
+  const stores = {
+    profiles: [],
+    daily_logs: [],
+    health_daily: [],
+    measurements: [],
+    settings: [],
+  };
+  const stats = { profiles_kept: 0, profiles_skipped: 0, daily_logs: 0, health_daily: 0, settings: 0 };
+
+  for (const p of legacy.stores?.profiles || []) {
+    if (!p || !p.userId) { stats.profiles_skipped++; continue; }
+    // Skip empty stub profiles (no DOB, no height, no starting weight)
+    if (!p.dob && p.heightCm == null && p.startingWeightKg == null) {
+      stats.profiles_skipped++;
+      continue;
+    }
+    stores.profiles.push({
+      id: p.userId,
+      name: p.name || '',
+      sex: p.sex || 'female',
+      dob: p.dob || '',
+      height_cm: p.heightCm ?? null,
+      height_unit: p.preferredHeightUnit || 'cm',
+      starting_weight_kg: p.startingWeightKg ?? null,
+      goal_weight_kg: p.goalWeightKg ?? null,
+      weight_unit: p.preferredWeightUnit || 'kg',
+      activity_level: activityLevelToNumber(p.activityLevel),
+      created_at: p.createdAt || new Date().toISOString(),
+      updated_at: p.updatedAt || new Date().toISOString(),
+    });
+    stats.profiles_kept++;
+  }
+
+  for (const d of legacy.stores?.dailyLogs || []) {
+    if (!d || !d.userId || !d.date) continue;
+    stores.daily_logs.push({
+      id: `${d.userId}::${d.date}`,
+      profile_id: d.userId,
+      date: d.date,
+      calories: d.caloriesEaten ?? null,
+      carbs: d.carbsGrams ?? null,
+      weight_kg: d.weightKg ?? null,
+      notes: d.notes || '',
+      updated_at: d.updatedAt || new Date().toISOString(),
+    });
+    stats.daily_logs++;
+  }
+
+  for (const h of legacy.stores?.healthDaily || []) {
+    if (!h || !h.userId || !h.date) continue;
+    stores.health_daily.push({
+      id: `${h.userId}::${h.date}`,
+      profile_id: h.userId,
+      date: h.date,
+      active_calories: h.activeCalories ?? null,
+      basal_calories: h.basalCalories ?? null,
+      steps: h.steps ?? null,
+      body_mass_kg: h.bodyMassKg ?? null,
+    });
+    stats.health_daily++;
+  }
+
+  for (const s of legacy.stores?.settings || []) {
+    if (!s || !s.key) continue;
+    if (s.key === 'activeProfileId') {
+      stores.settings.push({ key: 'active_profile_id', value: s.value });
+    } else if (s.key.startsWith('deficitMode:')) {
+      const uid = s.key.split(':')[1];
+      const tk = s.value === 1000 ? 'cut1000' : s.value === 0 ? 'maintenance' : 'cut500';
+      stores.settings.push({ key: `target_${uid}`, value: tk });
+    } else {
+      stores.settings.push(s);
+    }
+    stats.settings++;
+  }
+
+  // Also write each profile's last health import metadata so the dashboard shows it
+  for (const p of legacy.stores?.profiles || []) {
+    if (p?.userId && p.lastHealthImportAt) {
+      stores.settings.push({
+        key: `health_meta_${p.userId}`,
+        value: {
+          lastImportAt: p.lastHealthImportAt,
+          firstDate: p.healthDataStart || null,
+          lastDate: p.healthDataEnd || null,
+          recordsParsed: null,
+          recordsKept: stores.health_daily.filter(r => r.profile_id === p.userId).length,
+          daysCovered: stores.health_daily.filter(r => r.profile_id === p.userId && r.active_calories != null).length,
+          fileName: 'imported via legacy backup',
+        },
+      });
+    }
+  }
+
+  return {
+    converted: {
+      app: 'tdee-tracker',
+      version: 1,
+      dbVersion: 2,
+      exportedAt: legacy.exportedAt || new Date().toISOString(),
+      convertedFromLegacy: true,
+      stores,
+    },
+    stats,
+  };
+}
+
 async function restoreBackup(file, { wipeFirst = true } = {}) {
   const text = await file.text();
   if (!text || !text.trim()) {
@@ -109,6 +242,13 @@ async function restoreBackup(file, { wipeFirst = true } = {}) {
   }
   if (!blob.stores || typeof blob.stores !== 'object') {
     throw new Error('Backup file has no data sections.');
+  }
+  let conversionStats = null;
+  if (looksLikeLegacyBackup(blob)) {
+    const result = convertLegacyBackup(blob);
+    blob = result.converted;
+    conversionStats = result.stats;
+    console.info('Detected legacy backup format — converted on the fly.', conversionStats);
   }
   const storeNames = Object.keys(blob.stores);
   if (wipeFirst) {
@@ -139,7 +279,7 @@ async function restoreBackup(file, { wipeFirst = true } = {}) {
       `Stores tried: ${storeNames.join(', ')}.`
     );
   }
-  return { counts, skipped, issues, exportedAt: blob.exportedAt };
+  return { counts, skipped, issues, exportedAt: blob.exportedAt, conversionStats };
 }
 
 window.Backup = { exportBackup, restoreBackup, BACKUP_VERSION };

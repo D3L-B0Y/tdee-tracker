@@ -231,7 +231,7 @@
 
         <div class="card health" id="card-health">
           <div class="card-header">
-            <h2>Apple Health</h2>
+            <h2>Fitness data</h2>
             <span class="muted small" data-role="health-status">No data imported</span>
           </div>
           <div class="health-stats">
@@ -258,8 +258,8 @@
             <button type="button" class="btn ghost hidden" data-role="health-clear">Clear data</button>
           </div>
           <p class="muted small import-help">
-            Apple Health → profile icon → Export All Health Data (.zip).
-            CSV from a 7-day-export app works too. If a huge zip stalls, use Quick manual entry.
+            Supports Apple Health (.zip / .xml), MyFitnessPal (.zip with Nutrition/Exercise CSVs),
+            and generic CSV. Auto-detects on upload. Weekly re-uploads dedupe by date.
           </p>
           <div class="import-progress hidden" data-role="health-progress">
             <div class="progress-bar"><div class="bar-fill" data-role="bar-fill"></div></div>
@@ -378,6 +378,29 @@
     </section>
   </template>
 
+  <template id="tpl-restore-mode">
+    <div class="modal-backdrop">
+      <div class="modal modal-wide">
+        <h3>Restore from backup</h3>
+        <p class="muted small" data-role="file-info">—</p>
+        <p class="muted small">Pick how to handle data already on this device:</p>
+        <div class="restore-modes">
+          <button type="button" class="btn primary restore-mode-btn" data-mode="merge">
+            <strong>Merge</strong>
+            <span class="small">Add backup data alongside what's here. Same dates and IDs get overwritten by the backup. Use this when bringing a second profile across, or restoring on a device that already has data.</span>
+          </button>
+          <button type="button" class="btn danger restore-mode-btn" data-mode="replace">
+            <strong>Replace everything</strong>
+            <span class="small">Wipe the device clean, then load the backup. Use this on a fresh install or after switching browsers / devices.</span>
+          </button>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-action="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
   <template id="tpl-manual-health">
     <div class="modal-backdrop">
       <div class="modal modal-wide">
@@ -421,6 +444,7 @@
   <script src="db.js"></script>
   <script src="tdee.js"></script>
   <script src="import-health.js"></script>
+  <script src="import-mfp.js"></script>
   <script src="charts.js"></script>
   <script src="export.js"></script>
   <script src="cheat-day.js"></script>

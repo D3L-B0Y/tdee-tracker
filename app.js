@@ -57,39 +57,52 @@ const App = {
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    showConfirm({
-      title: 'Restore from backup?',
-      body: `This REPLACES all data currently in the app with the contents of "${file.name}". Your current profiles, logs, weights, Apple Health data, and measurements will be overwritten. Tip: take a backup first if you're not sure.`,
-      confirmLabel: 'Restore (replace all)',
-      onConfirm: async () => {
-        try {
-          const r = await Backup.restoreBackup(file, { wipeFirst: true });
-          await this.refreshProfiles();
-          const active = await DB.getSetting('active_profile_id');
-          if (active && this.state.profiles.some(p => p.id === active)) {
-            this.state.activeProfileId = active;
-            this.state.view = 'dashboard';
-          } else if (this.state.profiles.length > 0) {
-            this.state.activeProfileId = this.state.profiles[0].id;
-            this.state.view = 'dashboard';
-          } else {
-            this.state.view = 'welcome';
-          }
-          this.render();
-          const total = Object.values(r.counts).reduce((s, v) => s + v, 0);
-          const skippedTotal = Object.values(r.skipped || {}).reduce((s, v) => s + v, 0);
-          const msg = skippedTotal > 0
-            ? `Restored ${total} records (skipped ${skippedTotal} malformed)`
-            : `Restored ${total} records from ${new Date(r.exportedAt).toLocaleDateString()}`;
-          toast(msg, 'success');
-          if (Object.keys(r.issues || {}).length) {
-            console.warn('Restore issues:', r.issues);
-          }
-        } catch (err) {
-          toast(err.message || 'Restore failed', 'error');
-        }
-      },
+
+    const node = document.getElementById('tpl-restore-mode').content.cloneNode(true);
+    const backdrop = node.querySelector('.modal-backdrop');
+    node.querySelector('[data-role="file-info"]').textContent =
+      `File: ${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
+    const close = () => backdrop.remove();
+    node.querySelector('[data-action="cancel"]').addEventListener('click', close);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+    node.querySelectorAll('.restore-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.mode;
+        close();
+        this._performRestore(file, mode === 'replace');
+      });
     });
+    document.body.appendChild(node);
+  },
+
+  async _performRestore(file, wipeFirst) {
+    try {
+      const r = await Backup.restoreBackup(file, { wipeFirst });
+      await this.refreshProfiles();
+      const active = await DB.getSetting('active_profile_id');
+      if (active && this.state.profiles.some(p => p.id === active)) {
+        this.state.activeProfileId = active;
+        this.state.view = 'dashboard';
+      } else if (this.state.profiles.length > 0) {
+        this.state.activeProfileId = this.state.profiles[0].id;
+        this.state.view = 'dashboard';
+      } else {
+        this.state.view = 'welcome';
+      }
+      this.render();
+      const total = Object.values(r.counts).reduce((s, v) => s + v, 0);
+      const skippedTotal = Object.values(r.skipped || {}).reduce((s, v) => s + v, 0);
+      const action = wipeFirst ? 'Replaced' : 'Merged';
+      const msg = skippedTotal > 0
+        ? `${action} ${total} records (skipped ${skippedTotal} malformed)`
+        : `${action} ${total} records from ${new Date(r.exportedAt).toLocaleDateString()}`;
+      toast(msg, 'success');
+      if (Object.keys(r.issues || {}).length) {
+        console.warn('Restore issues:', r.issues);
+      }
+    } catch (err) {
+      toast(err.message || 'Restore failed', 'error');
+    }
   },
 
   async handleExport() {

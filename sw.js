@@ -1,6 +1,6 @@
 /* Service worker: cache the app shell so the PWA works offline.
    Cache versioning: bump CACHE_NAME to force clients to pull fresh files after deploy. */
-const CACHE_NAME = 'tdee-tracker-v2';
+const CACHE_NAME = 'tdee-tracker-v5';
 const SHELL = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const SHELL = [
   './db.js',
   './tdee.js',
   './import-health.js',
+  './import-mfp.js',
   './charts.js',
   './export.js',
   './cheat-day.js',

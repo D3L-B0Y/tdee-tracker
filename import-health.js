@@ -372,29 +372,51 @@ async function parseAnyHealthFile(file, onProgress) {
     onProgress?.({ phase: 'unzip', percent: 0 });
     const JSZip = await loadJSZip();
     const zip = await JSZip.loadAsync(file);
+
+    // Is this an Apple Health export?
     let xmlEntry = zip.file('apple_health_export/export.xml');
     if (!xmlEntry) {
       const matches = zip.file(/export\.xml$/i);
       if (matches && matches.length) xmlEntry = matches[0];
     }
-    if (!xmlEntry) throw new Error('No export.xml found inside the zip.');
-    onProgress?.({ phase: 'unzip', percent: 100 });
-    const uncompressed = xmlEntry._data?.uncompressedSize || 0;
-    return await parseHealthXMLFromZipEntry(xmlEntry, uncompressed, onProgress);
+    if (xmlEntry) {
+      onProgress?.({ phase: 'unzip', percent: 100 });
+      const uncompressed = xmlEntry._data?.uncompressedSize || 0;
+      return { kind: 'apple', result: await parseHealthXMLFromZipEntry(xmlEntry, uncompressed, onProgress) };
+    }
+
+    // Is this a MyFitnessPal export?
+    const hasMFP = !!(
+      zip.file(/Nutrition-Summary/i)?.length ||
+      zip.file(/Exercise-Summary/i)?.length ||
+      zip.file(/Measurement-Summary/i)?.length
+    );
+    if (hasMFP) {
+      // Signal to caller: they should use MFPImport instead
+      return { kind: 'mfp-detected' };
+    }
+    throw new Error('Zip does not appear to be an Apple Health or MyFitnessPal export.');
   }
   if (isCSV) {
     onProgress?.({ phase: 'read', percent: 0 });
     const text = await file.text();
     onProgress?.({ phase: 'read', percent: 100 });
-    return parseHealthCSV(text, onProgress);
+    return { kind: 'apple', result: parseHealthCSV(text, onProgress) };
   }
   // Default: treat as XML, stream it
-  return await parseHealthXMLFromBlob(file, onProgress);
+  return { kind: 'apple', result: await parseHealthXMLFromBlob(file, onProgress) };
 }
 
 async function importHealthData(profileId, file, onProgress) {
-  const result = await parseAnyHealthFile(file, onProgress);
+  const dispatch = await parseAnyHealthFile(file, onProgress);
 
+  // MyFitnessPal path — hand off to the dedicated importer
+  if (dispatch.kind === 'mfp-detected') {
+    const meta = await MFPImport.importMFPExport(profileId, file, onProgress);
+    return { source: 'myfitnesspal', meta, daysCovered: meta.daysCovered, recordsKept: meta.recordsKept };
+  }
+
+  const result = dispatch.result;
   onProgress?.({ phase: 'save', percent: 0 });
   for (let i = 0; i < result.dailyRows.length; i++) {
     const r = result.dailyRows[i];
@@ -421,6 +443,7 @@ async function importHealthData(profileId, file, onProgress) {
     fileName: file.name || null,
     fileSizeBytes: file.size || null,
     detectedColumns: result.detectedColumns || null,
+    source: 'apple',
   };
   await DB.setSetting(`health_meta_${profileId}`, meta);
   return { ...result, meta };
