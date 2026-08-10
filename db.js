@@ -162,8 +162,10 @@ async function upsertHealthDaily(profileId, date, patch) {
     date,
     active_calories: null,
     basal_calories: null,
+    total_calories: null,
     steps: null,
     body_mass_kg: null,
+    source: null,
     ...(existing || {}),
     ...patch,
   };

@@ -395,12 +395,27 @@ async function parseAnyHealthFile(file, onProgress) {
       // Signal to caller: they should use MFPImport instead
       return { kind: 'mfp-detected' };
     }
-    throw new Error('Zip does not appear to be an Apple Health or MyFitnessPal export.');
+
+    // Is this a Google Takeout / Fit / Health Connect export?
+    if (typeof GoogleImport !== 'undefined' && GoogleImport.looksLikeGoogleZip(zip)) {
+      return { kind: 'google-detected' };
+    }
+
+    throw new Error('Zip does not look like an Apple Health, MyFitnessPal or Google export.');
   }
   if (isCSV) {
     onProgress?.({ phase: 'read', percent: 0 });
     const text = await file.text();
     onProgress?.({ phase: 'read', percent: 100 });
+    // Google Fit CSVs report a plain total "Calories (kcal)" column and no
+    // active-energy column — route those to the Google parser so BMR isn't
+    // double-counted.
+    const header = (text.split(/\r\n|\n|\r/)[0] || '').toLowerCase();
+    const hasActiveCol = /active[\s_]*(energy|calorie)/.test(header);
+    const hasPlainCalories = /calorie|kcal/.test(header);
+    if (!hasActiveCol && hasPlainCalories) {
+      return { kind: 'google-detected' };
+    }
     return { kind: 'apple', result: parseHealthCSV(text, onProgress) };
   }
   // Default: treat as XML, stream it
@@ -416,6 +431,12 @@ async function importHealthData(profileId, file, onProgress) {
     return { source: 'myfitnesspal', meta, daysCovered: meta.daysCovered, recordsKept: meta.recordsKept };
   }
 
+  // Google Fit / Health Connect / Takeout path
+  if (dispatch.kind === 'google-detected') {
+    const meta = await GoogleImport.importGoogleData(profileId, file, onProgress);
+    return { source: 'google', meta, daysCovered: meta.daysCovered, recordsKept: meta.recordsKept };
+  }
+
   const result = dispatch.result;
   onProgress?.({ phase: 'save', percent: 0 });
   for (let i = 0; i < result.dailyRows.length; i++) {
@@ -425,6 +446,7 @@ async function importHealthData(profileId, file, onProgress) {
       basal_calories:  r.basal_calories,
       body_mass_kg:    r.body_mass_kg,
       steps:           r.steps,
+      source:          'apple',
     });
     if ((i & 31) === 0) {
       onProgress?.({ phase: 'save', percent: Math.floor((i / result.dailyRows.length) * 100) });

@@ -46,8 +46,10 @@ const App = {
   async handleBackup() {
     try {
       const r = await Backup.exportBackup();
+      if (r.cancelled) { toast('Backup cancelled', 'error'); return; }
       const total = Object.values(r.counts).reduce((s, v) => s + v, 0);
-      toast(`Backup downloaded · ${total} records across ${Object.keys(r.counts).length} stores`, 'success');
+      const verb = r.method === 'share' ? 'shared' : 'downloaded';
+      toast(`Backup ${verb} · ${total} records across ${Object.keys(r.counts).length} stores`, 'success');
     } catch (err) {
       toast(err.message || 'Backup failed', 'error');
     }

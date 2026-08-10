@@ -80,9 +80,29 @@ async function exportBackup() {
     stores: data,
   };
   const json = JSON.stringify(blob, null, 2);
-  const file = new Blob([json], { type: 'application/json' });
   const filename = `tdee-tracker-backup_${new Date().toISOString().slice(0, 10)}.json`;
-  const url = URL.createObjectURL(file);
+
+  // iOS home-screen web apps can't reliably trigger a download, so hand the file
+  // to the share sheet instead (AirDrop / Mail / Files all work from there).
+  const shareFile = new File([json], filename, { type: 'application/json' });
+  if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
+    try {
+      await navigator.share({
+        files: [shareFile],
+        title: 'TDEE Tracker backup',
+      });
+      return { filename, counts: blob.counts, method: 'share' };
+    } catch (err) {
+      // User dismissed the share sheet — don't then force a download on them.
+      if (err && err.name === 'AbortError') {
+        return { filename, counts: blob.counts, method: 'cancelled', cancelled: true };
+      }
+      // Anything else: fall through to the download path below.
+    }
+  }
+
+  const fileBlob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(fileBlob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
@@ -90,7 +110,7 @@ async function exportBackup() {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return { filename, counts: blob.counts };
+  return { filename, counts: blob.counts, method: 'download' };
 }
 
 function looksLikeLegacyBackup(blob) {

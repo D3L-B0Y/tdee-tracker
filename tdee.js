@@ -33,18 +33,88 @@ function computeStaticTDEE(profile, weightKg) {
 function computeHealthTDEE(profile, healthRows, weightKg) {
   // BMR (no multiplier) + 7-day rolling average of active calories.
   if (!healthRows || healthRows.length === 0) {
-    return { available: false, reason: 'No Apple Health data imported yet.' };
+    return { available: false, reason: 'No activity data imported yet.' };
   }
   const sorted = [...healthRows].sort((a, b) => b.date.localeCompare(a.date));
-  const withActive = sorted.filter(h => h.active_calories != null);
+  const bmr = computeBMR(profile, weightKg);
+
+  // Different trackers mean different things by "calories", so the formula has to
+  // match the source. The NEWEST rows decide, otherwise an old export from a
+  // tracker you've stopped using keeps overriding your current one.
+  //
+  //   apple  -> active energy is all-day movement       => BMR + active
+  //   google -> already a total daily burn              => total as-is
+  //   mfp    -> logged workouts only, not daily movement => BMR x multiplier + exercise
+  //
+  // Rows imported before sources were tagged are inferred: a total_calories value
+  // could only have come from a Google-style export; anything else is Apple-style.
+  const rowSource = (h) => h.source || (h.total_calories != null ? 'google' : 'apple');
+
+  const newest = sorted.find(h => h.total_calories != null || h.active_calories != null);
+  if (!newest) {
+    return { available: false, reason: 'Need 3+ days of imported activity data.' };
+  }
+  const inferredSource = rowSource(newest);
+
+  // Only average rows from the SAME source. Mixing them would blend numbers that
+  // mean different things — e.g. straddling an Apple->MFP switch would silently
+  // produce an average of two incompatible measurements.
+  const sameSource = sorted.filter(h => rowSource(h) === inferredSource);
+
+  if (inferredSource === 'google') {
+    const withTotal = sameSource.filter(h => h.total_calories != null);
+    if (withTotal.length >= 3) {
+      const recent = withTotal.slice(0, 7);
+      const avgTotal = recent.reduce((s, h) => s + h.total_calories, 0) / recent.length;
+      return {
+        available: true,
+        basis: 'total',
+        source: 'google',
+        tdee: Math.round(avgTotal),
+        bmr: Math.round(bmr),
+        avgTotal: Math.round(avgTotal),
+        avgActive: Math.round(Math.max(0, avgTotal - bmr)),
+        days: recent.length,
+        firstDate: recent[recent.length - 1].date,
+        lastDate: recent[0].date,
+      };
+    }
+  }
+
+  const withActive = sameSource.filter(h => h.active_calories != null);
   if (withActive.length < 3) {
-    return { available: false, reason: 'Need 3+ days of Apple Health active-energy data.' };
+    return {
+      available: false,
+      reason: `Need 3+ days from your current source (have ${withActive.length}). Upload another export.`,
+    };
   }
   const recent = withActive.slice(0, 7);
   const avgActive = recent.reduce((s, h) => s + h.active_calories, 0) / recent.length;
-  const bmr = computeBMR(profile, weightKg);
+
+  if (inferredSource === 'myfitnesspal') {
+    // MFP exercise calories are a supplement to your baseline, not a replacement
+    // for it — the activity multiplier already covers everyday movement.
+    const base = bmr * profile.activity_level;
+    return {
+      available: true,
+      basis: 'exercise-on-base',
+      source: 'myfitnesspal',
+      tdee: Math.round(base + avgActive),
+      bmr: Math.round(bmr),
+      base: Math.round(base),
+      multiplier: profile.activity_level,
+      avgExercise: Math.round(avgActive),
+      avgActive: Math.round(avgActive),
+      days: recent.length,
+      firstDate: recent[recent.length - 1].date,
+      lastDate: recent[0].date,
+    };
+  }
+
   return {
     available: true,
+    basis: 'active',
+    source: 'apple',
     tdee: Math.round(bmr + avgActive),
     bmr: Math.round(bmr),
     avgActive: Math.round(avgActive),
@@ -136,11 +206,17 @@ function computeAllModes(profile, dailyLogs, healthRows) {
   } else if (health.available) {
     bestKey = 'health';
     best = health.tdee;
-    explainer = `BMR (${health.bmr}) + ${health.days}-day avg active burn from Apple Health (${health.avgActive} cal/day). Log 14+ days of calories & weight for adaptive — that's the gold standard.`;
+    if (health.basis === 'total') {
+      explainer = `${health.days}-day avg total daily burn from Google data (${health.avgTotal} cal/day — BMR already included). Log 14+ days of calories & weight for adaptive — that's the gold standard.`;
+    } else if (health.basis === 'exercise-on-base') {
+      explainer = `Baseline ${health.base} (BMR ${health.bmr} × ${health.multiplier} activity) + ${health.days}-day avg logged exercise from MyFitnessPal (${health.avgExercise} cal/day). MFP only counts logged workouts, so your activity level setting matters here — check it's honest. Log 14+ days of calories & weight for adaptive.`;
+    } else {
+      explainer = `BMR (${health.bmr}) + ${health.days}-day avg active burn from Apple Health (${health.avgActive} cal/day). Log 14+ days of calories & weight for adaptive — that's the gold standard.`;
+    }
   } else {
     bestKey = 'static';
     best = stat.tdee;
-    explainer = `Mifflin–St Jeor BMR × activity multiplier (×${stat.multiplier}). Upload Apple Health data for a watch-driven estimate, or log 14+ days for adaptive.`;
+    explainer = `Mifflin–St Jeor BMR × activity multiplier (×${stat.multiplier}). Import Apple Health, MyFitnessPal or Google Fit data for a tracker-driven estimate, or log 14+ days for adaptive.`;
   }
 
   return {

@@ -258,8 +258,9 @@
             <button type="button" class="btn ghost hidden" data-role="health-clear">Clear data</button>
           </div>
           <p class="muted small import-help">
-            Supports Apple Health (.zip / .xml), MyFitnessPal (.zip with Nutrition/Exercise CSVs),
-            and generic CSV. Auto-detects on upload. Weekly re-uploads dedupe by date.
+            Supports Apple Health (.zip / .xml), MyFitnessPal (.zip), Google Fit / Health
+            Connect / Takeout (.zip / .csv), and generic CSV. Auto-detects on upload.
+            Weekly re-uploads dedupe by date.
           </p>
           <div class="import-progress hidden" data-role="health-progress">
             <div class="progress-bar"><div class="bar-fill" data-role="bar-fill"></div></div>
@@ -445,6 +446,7 @@
   <script src="tdee.js"></script>
   <script src="import-health.js"></script>
   <script src="import-mfp.js"></script>
+  <script src="import-google.js"></script>
   <script src="charts.js"></script>
   <script src="export.js"></script>
   <script src="cheat-day.js"></script>

@@ -186,6 +186,9 @@ async function importMFPExport(profileId, file, onProgress) {
     if (d.active_count > 0) healthPatch.active_calories = Math.round(d.active_sum);
     if (d.steps_count > 0)  healthPatch.steps = Math.round(d.steps_sum);
     if (Object.keys(healthPatch).length > 0) {
+      // MFP's "Exercise Calories" is logged workouts only — NOT all-day movement
+      // like Apple's active energy. Tagged so the TDEE calc uses the right formula.
+      healthPatch.source = 'myfitnesspal';
       await DB.upsertHealthDaily(profileId, date, healthPatch);
       healthWrites++;
     }
